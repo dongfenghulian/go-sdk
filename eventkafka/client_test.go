@@ -276,3 +276,27 @@ func TestAppMessageIDNumberJSON(t *testing.T) {
 		t.Fatal("empty optional id_number should be omitted")
 	}
 }
+
+func TestOwnedTransportAndUnchangedUpdate(t *testing.T) {
+	c, err := New(Config{Brokers: []string{"broker.example.invalid:9092"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	old := c.writer.(*ownedWriter)
+	if old.Writer.Transport != old.transport || old.Writer.Transport == kafka.DefaultTransport {
+		t.Fatal("transport must be owned")
+	}
+	if err := c.UpdateBrokers([]string{"broker.example.invalid:9092"}); err != nil {
+		t.Fatal(err)
+	}
+	if c.writer != old {
+		t.Fatal("unchanged config recreated writer")
+	}
+	if err := c.UpdateBrokers([]string{"new.example.invalid:9092"}); err != nil {
+		t.Fatal(err)
+	}
+	if c.writer.(*ownedWriter).transport == old.transport {
+		t.Fatal("replacement reused old transport")
+	}
+}

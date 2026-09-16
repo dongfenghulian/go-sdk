@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,13 +92,26 @@ func New(cfg Config) (*Client, error) {
 	return &Client{config: cfg, writer: newWriter(cfg)}, nil
 }
 
+type ownedWriter struct {
+	*kafka.Writer
+	transport *kafka.Transport
+}
+
+func (w *ownedWriter) Close() error {
+	err := w.Writer.Close()
+	w.transport.CloseIdleConnections()
+	return err
+}
+
 func newWriter(cfg Config) messageWriter {
-	return &kafka.Writer{
-		Addr: kafka.TCP(cfg.Brokers...), Balancer: &kafka.Hash{},
+	transport := &kafka.Transport{DialTimeout: cfg.SendTimeout, IdleTimeout: 30 * time.Second}
+	return &ownedWriter{transport: transport, Writer: &kafka.Writer{
+		Transport: transport,
+		Addr:      kafka.TCP(cfg.Brokers...), Balancer: &kafka.Hash{},
 		RequiredAcks: kafka.RequireAll, MaxAttempts: cfg.MaxAttempts,
 		ReadTimeout: cfg.SendTimeout, WriteTimeout: cfg.SendTimeout,
 		BatchTimeout: 10 * time.Millisecond,
-	}
+	}}
 }
 
 // UpdateBrokers waits for active sends, then switches writers.
@@ -111,6 +125,9 @@ func (c *Client) UpdateBrokers(brokers []string) error {
 	defer c.mu.Unlock()
 	if c.closed {
 		return ErrClosed
+	}
+	if slices.Equal(valid, c.config.Brokers) {
+		return nil
 	}
 	cfg := c.config
 	cfg.Brokers = valid
