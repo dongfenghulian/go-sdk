@@ -43,11 +43,16 @@ type messageWriter interface {
 
 // Client is safe for concurrent sends. Do not mutate messages during Send.
 type Client struct {
-	mu     sync.RWMutex
+	mu     sync.Mutex
 	writer messageWriter
 	config Config
 	closed bool
-	slots  chan struct{}
+	// lifecycle serializes updates and cleanup, never sends.
+	lifecycle sync.Mutex
+	active    *sync.WaitGroup // protected by mu; replaced on each writer switch
+	closeDone chan struct{}
+	closeErr  error // published by closing closeDone
+	slots     chan struct{}
 }
 
 func ParseBrokers(raw string) ([]string, error) {
@@ -97,7 +102,7 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Host == "" {
 		cfg.Host, _ = os.Hostname()
 	}
-	return &Client{config: cfg, writer: newWriter(cfg), slots: make(chan struct{}, cfg.MaxConcurrentSends)}, nil
+	return &Client{config: cfg, writer: newWriter(cfg), slots: make(chan struct{}, cfg.MaxConcurrentSends), active: &sync.WaitGroup{}, closeDone: make(chan struct{})}, nil
 }
 
 type ownedWriter struct {
@@ -122,31 +127,42 @@ func newWriter(cfg Config) messageWriter {
 	}}
 }
 
-// UpdateBrokers waits for active sends, then switches writers.
+// UpdateBrokers switches writers before draining and closing the old writer.
+// Updates serialize with each other, but cleanup never blocks new sends.
+// A cleanup error does not roll back the new configuration.
 // Invalid input leaves the current writer unchanged.
 func (c *Client) UpdateBrokers(brokers []string) error {
 	valid, err := validateBrokers(brokers)
 	if err != nil {
 		return err
 	}
+	c.lifecycle.Lock()
+	defer c.lifecycle.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return ErrClosed
 	}
 	if slices.Equal(valid, c.config.Brokers) {
+		c.mu.Unlock()
 		return nil
 	}
 	cfg := c.config
 	cfg.Brokers = valid
-	old := c.writer
+	old, active := c.writer, c.active
+	// newWriter only allocates local state; it performs no network I/O.
 	c.writer = newWriter(cfg)
-	// Only Brokers is mutable; send defaults remain immutable.
+	c.active = &sync.WaitGroup{}
 	c.config.Brokers = valid
+	c.mu.Unlock()
+	// No further Add calls can reach this generation after the switch.
+	active.Wait()
 	return old.Close()
 }
 
 func (c *Client) SendApp(ctx context.Context, m *AppMessage) error {
+	ctx, cancel := context.WithTimeout(ctx, c.config.SendTimeout)
+	defer cancel()
 	if err := c.acquire(ctx); err != nil {
 		return err
 	}
@@ -158,6 +174,8 @@ func (c *Client) SendApp(ctx context.Context, m *AppMessage) error {
 }
 
 func (c *Client) SendSys(ctx context.Context, m *SysMessage) error {
+	ctx, cancel := context.WithTimeout(ctx, c.config.SendTimeout)
+	defer cancel()
 	if err := c.acquire(ctx); err != nil {
 		return err
 	}
@@ -192,14 +210,20 @@ func (c *Client) send(ctx context.Context, topic, key string, eventTime int64, m
 	if err != nil {
 		return fmt.Errorf("eventkafka: encode: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.config.SendTimeout)
-	defer cancel()
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
 	if c.closed {
+		c.mu.Unlock()
 		return ErrClosed
 	}
-	if err := c.writer.WriteMessages(ctx, kafka.Message{Topic: topic, Key: []byte(key), Value: data, Time: time.UnixMilli(eventTime)}); err != nil {
+	if err := ctx.Err(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	writer, active := c.writer, c.active
+	active.Add(1)
+	c.mu.Unlock()
+	defer active.Done()
+	if err := writer.WriteMessages(ctx, kafka.Message{Topic: topic, Key: []byte(key), Value: data, Time: time.UnixMilli(eventTime)}); err != nil {
 		return fmt.Errorf("eventkafka: send %s: %w", topic, err)
 	}
 	return nil
@@ -208,12 +232,25 @@ func (c *Client) send(ctx context.Context, topic, key string, eventTime int64, m
 // Close waits for active sends and flushes the writer. It is idempotent.
 func (c *Client) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
-		return nil
+		c.mu.Unlock()
+		<-c.closeDone
+		return c.closeErr
 	}
+	// Reject new sends immediately, even while an update is draining.
 	c.closed = true
-	return c.writer.Close()
+	c.mu.Unlock()
+
+	c.lifecycle.Lock()
+	defer c.lifecycle.Unlock()
+	// Any update that switched writers has now finished retiring its writer.
+	c.mu.Lock()
+	writer, active := c.writer, c.active
+	c.mu.Unlock()
+	active.Wait()
+	c.closeErr = writer.Close()
+	close(c.closeDone)
+	return c.closeErr
 }
 
 // acquire never queues work when the per-client concurrency budget is exhausted.

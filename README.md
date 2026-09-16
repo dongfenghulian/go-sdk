@@ -10,10 +10,10 @@
 
 ## 安装
 
-安装首个版本：
+安装：
 
 ```sh
-go get github.com/dongfenghulian/go-sdk@v0.1.0
+go get github.com/dongfenghulian/go-sdk@v0.1.5
 ```
 
 业务中按需导入：

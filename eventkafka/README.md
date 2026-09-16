@@ -8,7 +8,7 @@ Go SDK，包名 `eventkafka`，基于 `github.com/segmentio/kafka-go`。
 
 ## 使用
 
-导入路径：`github.com/dongfenghulian/go-sdk/eventkafka`。安装：`go get github.com/dongfenghulian/go-sdk@v0.1.0`。
+导入路径：`github.com/dongfenghulian/go-sdk/eventkafka`。安装：`go get github.com/dongfenghulian/go-sdk@v0.1.5`。
 
 ```go
 import (
@@ -50,6 +50,12 @@ func send(ctx context.Context, client *eventkafka.Client) error {
 服务启动时调用一次 `newClient`，各处理器共享返回的 Client。
 停止接收请求并等待业务任务结束后，在服务退出流程调用 `client.Close()`。
 
+接入注意：
+
+- 如有全局 Client 包装层，只在读取或替换指针时持锁；调用 SDK 发送、更新或关闭时释放状态锁。
+- 初始化、配置更新和退出单独协调；退出后禁止重新创建 Client。遇到 `ErrClosed` 不自动重建。
+- 数据查询及多条事件发送应共享调用方的耗时预算，避免每条消息重新获得完整超时时间。
+
 ## etcd 接入
 
 业务服务负责读取和 watch `eventkafka.BrokersKey`：
@@ -60,7 +66,10 @@ watch 收到更新时调用 `ParseBrokers` 和 `client.UpdateBrokers`。
 删除、空值或格式错误应在业务配置层记录错误并保留旧配置。
 SDK 不依赖 etcd、Gin 或 CAS，配置来源可由其他项目自行选择。
 
-更新会等待在途发送完成后切换 Writer；配置不合法不切换。
+更新先切换 Writer，再等待旧 Writer 的在途发送完成并关闭旧 Writer；配置不合法不切换。
+配置更新之间串行执行，旧 Writer 的清理不阻塞新 Writer 的发送。
+调用方应串行处理或合并配置通知，避免为每次更新无限创建 goroutine。
+`UpdateBrokers` 和 `Close` 同步等待清理，没有硬性关闭时限；跨配置切换不保证消息顺序。
 如果旧 Writer 关闭失败，UpdateBrokers 返回错误，但新配置已经生效。
 New 不探测 broker 可达性，网络错误在发送时返回。
 
@@ -69,8 +78,9 @@ New 不探测 broker 可达性，网络错误在发送时返回。
 - Client 支持并发发送；发送期间不要修改消息及其 map/slice。
 - 默认同步发送、RequireAll、最多 3 次尝试，总发送超时 3 秒；
   可通过 SendTimeout、MaxAttempts 调整，调用方更短的 context deadline 优先。
-- 锁竞争和 Writer 切换期间可能额外等待；超时约束用于发送 context，
-  不承诺整个方法严格在超时时间内返回。
+- 发送超时从 SendApp/SendSys 入口开始计算；发送不会等待旧 Writer 清理。
+  同步校验、JSON 编码（包括自定义 MarshalJSON）和运行时调度不能被 context 强制中断，
+  因此不承诺任意调用方代码下严格的墙钟返回时限。
 - 构造函数只生成一次 UUID 与 UTC 毫秒时间；重投应复用消息及 event_id。
 - 失败返回 error，不递归发送 SysMessage，不内置落盘队列。
   进程崩溃或重试耗尽后的补发由调用方负责；超时结果可能不确定，允许重复投递。
