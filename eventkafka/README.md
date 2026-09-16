@@ -104,9 +104,9 @@ SDK 不内置账号、密码、真实连接地址或本机路径。示例域名�
 关闭和配置切换时，先等待 Writer 完成，再调用 CloseIdleConnections 释放旧连接池。
 重复设置相同 brokers 列表不重建 Writer；列表顺序变化视为配置变化。
 
-## 发送并发限制（v0.1.3）
+## 发送并发限制（v0.1.4）
 
-Config.MaxConcurrentSends 控制每个 Client 同时执行的发送调用数量，默认 16，
+Config.MaxConcurrentSends 控制每个 Client 同时执行的发送调用数量，默认 32，
 正数可自定义，负数非法。SendApp 与 SendSys 共用额度，校验和序列化也在额度内。
 超限立即返回 ErrBusy，不排队、不自动补发；调用方可用 errors.Is 判断。
 这是发送调用并发限制，不是连接数、Kafka 分区数或进程全局限制。

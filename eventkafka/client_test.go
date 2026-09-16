@@ -337,7 +337,7 @@ func TestSendLimitConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if cap(c.slots) != 16 {
+	if cap(c.slots) != 32 {
 		t.Fatal("wrong default")
 	}
 	cfg.MaxConcurrentSends = -1

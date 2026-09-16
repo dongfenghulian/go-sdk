@@ -32,7 +32,7 @@ type Config struct {
 	Host         string
 	SendTimeout  time.Duration
 	MaxAttempts  int
-	// MaxConcurrentSends bounds App and Sys sends together per Client. Zero defaults to 16.
+	// MaxConcurrentSends bounds App and Sys sends together per Client. Zero defaults to 32.
 	MaxConcurrentSends int
 }
 
@@ -92,7 +92,7 @@ func New(cfg Config) (*Client, error) {
 		cfg.MaxAttempts = 3
 	}
 	if cfg.MaxConcurrentSends == 0 {
-		cfg.MaxConcurrentSends = 16
+		cfg.MaxConcurrentSends = 32
 	}
 	if cfg.Host == "" {
 		cfg.Host, _ = os.Hostname()
