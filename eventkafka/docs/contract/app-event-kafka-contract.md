@@ -35,6 +35,8 @@
   "device_uuid":    "d4e5f6-uuid",
   "gaid_idfa":      "GAID-xxxx",
   "user_id":        10086,
+  "group_user_id":  20086,
+  "id_number":      "example-id-number",
   "mobile":         "token_char28...",
 
   "bid":            "example-business",
@@ -67,6 +69,8 @@
 | `is_test` | int | | `1`=测试事件；缺省 `0` |
 | `gaid_idfa` | string | | GAID/IDFA；iOS 未授权可空 |
 | `user_id` | int64 | | 用户 ID；未登录/缺省 `0` |
+| `group_user_id` | int64 | | 用户组 ID；未登录/缺省 `0` |
+| `id_number` | string | | 身份证号；可选，原样透传 |
 | `mobile` | string | | 手机号，原样透传不脱敏 |
 | `app_version` | string | | App 版本名 |
 | `ip` | string | | 上报 IP，原样透传不脱敏 |
@@ -102,5 +106,3 @@
 - **不脱敏**（§8.3）：`mobile` / `gaid_idfa` / `ip` 等标识原样透传，访问控制交由库表/列级权限。
 - **`bid` / `app_id` 上游直传**，数仓不再由 package 反查映射；消息不含 `package`。
 - 自定义字段按值类型分投 `fi` / `ff` / `fs` 三桶，不为单 key 开列。
-
-

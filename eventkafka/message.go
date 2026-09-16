@@ -30,6 +30,8 @@ type AppMessage struct {
 	DeviceUUID   string             `json:"device_uuid"`
 	GaidIDFA     string             `json:"gaid_idfa,omitempty"`
 	UserID       int64              `json:"user_id"`
+	GroupUserID  int64              `json:"group_user_id"`
+	IDNumber     string             `json:"id_number,omitempty"`
 	Mobile       string             `json:"mobile,omitempty"`
 	BID          string             `json:"bid"`
 	AppID        int                `json:"app_id"`

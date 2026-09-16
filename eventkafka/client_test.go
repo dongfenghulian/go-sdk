@@ -218,3 +218,61 @@ func TestSendHonorsDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAppMessageGroupUserIDJSON(t *testing.T) {
+	for _, id := range []int64{0, 9223372036854775807} {
+		data, err := json.Marshal(AppMessage{UserID: id, GroupUserID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"user_id", "group_user_id"} {
+			raw, ok := fields[key]
+			if !ok {
+				t.Fatalf("missing top-level %s", key)
+			}
+			var got int64
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != id {
+				t.Fatalf("%s=%d want %d", key, got, id)
+			}
+		}
+	}
+}
+
+func TestAppMessageIDNumberJSON(t *testing.T) {
+	data, err := json.Marshal(AppMessage{UserID: 1, IDNumber: "example-id-number"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	if err := json.Unmarshal(fields["id_number"], &got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "example-id-number" {
+		t.Fatalf("id_number=%q", got)
+	}
+	if _, ok := fields["user_id"]; !ok {
+		t.Fatal("missing sibling user_id")
+	}
+	data, err = json.Marshal(AppMessage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var empty map[string]json.RawMessage
+	if err := json.Unmarshal(data, &empty); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := empty["id_number"]; ok {
+		t.Fatal("empty optional id_number should be omitted")
+	}
+}
