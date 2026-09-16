@@ -1,0 +1,99 @@
+# eventkafka
+
+Go SDK，包名 `eventkafka`，基于 `github.com/segmentio/kafka-go`。
+
+- `AppMessage` → `app.app-event-v1`，Kafka key 为 device_uuid。
+- `SysMessage` → `sys.sys-event-v1`，Kafka key 为 event_id。
+- 消息字段遵循 [App 契约](docs/contract/app-event-kafka-contract.md) 和 [Sys 契约](docs/contract/sys-event-kafka-contract.md)。
+
+## 使用
+
+导入路径：`github.com/dongfenghulian/go-sdk/eventkafka`。安装：`go get github.com/dongfenghulian/go-sdk@v0.1.0`。
+
+```go
+import (
+    "context"
+    eventkafka "github.com/dongfenghulian/go-sdk/eventkafka"
+)
+
+// 服务启动时调用一次，将返回的 Client 注入各业务处理器。
+func newClient(brokersJSON string) (*eventkafka.Client, error) {
+    brokers, err := eventkafka.ParseBrokers(brokersJSON)
+    if err != nil { return nil, err }
+    return eventkafka.New(eventkafka.Config{
+        Brokers: brokers,
+        SourceSystem: "example-service",
+        JobName: "example-job",
+        Environment: "prod",
+        Version: "1.0.0",
+    })
+}
+
+// 每次业务事件复用传入的 Client；这里不创建或关闭连接。
+func send(ctx context.Context, client *eventkafka.Client) error {
+
+    msg := eventkafka.NewAppMessage("approval_completed")
+    msg.RequestID = "request-1"
+    msg.DeviceUUID = "device-1"
+    msg.BID = "example-business"
+    msg.AppID = 101
+    msg.PayloadJSON = map[string]any{"application_no": "app-1"}
+    if err := client.SendApp(ctx, msg); err != nil { return err }
+
+    sys := eventkafka.NewSysMessage(eventkafka.LevelWarn, "PROVIDER_SLOW", "provider response slow")
+    sys.EntityRef = "app-1"
+    sys.ContextJSON = map[string]any{"elapsed_ms": 2000}
+    return client.SendSys(ctx, sys)
+}
+```
+
+服务启动时调用一次 `newClient`，各处理器共享返回的 Client。
+停止接收请求并等待业务任务结束后，在服务退出流程调用 `client.Close()`。
+
+## etcd 接入
+
+业务服务负责读取和 watch `eventkafka.BrokersKey`：
+`/config/rw/kafka/borker`（保留既有拼写），值为 `["broker.example.invalid:9092"]`。
+
+启动时将 etcd 返回值交给 `ParseBrokers`，再传入 `New`。
+watch 收到更新时调用 `ParseBrokers` 和 `client.UpdateBrokers`。
+删除、空值或格式错误应在业务配置层记录错误并保留旧配置。
+SDK 不依赖 etcd、Gin 或 CAS，配置来源可由其他项目自行选择。
+
+更新会等待在途发送完成后切换 Writer；配置不合法不切换。
+如果旧 Writer 关闭失败，UpdateBrokers 返回错误，但新配置已经生效。
+New 不探测 broker 可达性，网络错误在发送时返回。
+
+## 发送语义
+
+- Client 支持并发发送；发送期间不要修改消息及其 map/slice。
+- 默认同步发送、RequireAll、最多 3 次尝试，总发送超时 3 秒；
+  可通过 SendTimeout、MaxAttempts 调整，调用方更短的 context deadline 优先。
+- 锁竞争和 Writer 切换期间可能额外等待；超时约束用于发送 context，
+  不承诺整个方法严格在超时时间内返回。
+- 构造函数只生成一次 UUID 与 UTC 毫秒时间；重投应复用消息及 event_id。
+- 失败返回 error，不递归发送 SysMessage，不内置落盘队列。
+  进程崩溃或重试耗尽后的补发由调用方负责；超时结果可能不确定，允许重复投递。
+- SysMessage 默认继承客户端的 source_system、job_name、env、host、app_version；
+  单条消息显式值优先，SendSys 不修改原消息。
+- WARN 全量发送。fingerprint 默认省略，由 Flink 权威算法生成。
+- payload_json/context_json 必须为原生 object/array；可用 map、slice 或 json.RawMessage，
+  不接受字符串、数字或显式 JSON null。无需字段时使用 nil。
+- 不脱敏、不截断，不生成消费方派生字段；Flink 负责契约规定的体积治理。
+  Kafka 自身消息大小限制仍可能导致发送失败。
+- 调用方提供有效 bid、身份字段和 is_test；SDK 不查询业务数据库。
+- 同设备使用相同 Kafka key 不等于跨并发请求的业务严格顺序。
+- SDK 不自动创建 topic，部署前准备两个 topic。
+
+## 验证
+
+```sh
+go test -race ./...
+go vet ./...
+```
+
+单元测试使用模拟 Writer；真实 Kafka 连通性需要在部署环境验证。
+
+## 配置保密
+
+SDK 不内置账号、密码、真实连接地址或本机路径。示例域名使用保留的 .invalid 域，均非实际服务。连接信息由调用方从配置系统读取；不要将运行时配置或凭据提交到仓库。SDK 不主动输出日志；底层发送错误可能包含网络端点，调用方对外输出错误时应按需脱敏。
