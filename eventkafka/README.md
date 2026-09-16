@@ -103,3 +103,13 @@ SDK 不内置账号、密码、真实连接地址或本机路径。示例域名�
 每个 Writer 使用 SDK 独立持有的 Transport，不使用进程共享的 DefaultTransport。
 关闭和配置切换时，先等待 Writer 完成，再调用 CloseIdleConnections 释放旧连接池。
 重复设置相同 brokers 列表不重建 Writer；列表顺序变化视为配置变化。
+
+## 发送并发限制（v0.1.3）
+
+Config.MaxConcurrentSends 控制每个 Client 同时执行的发送调用数量，默认 16，
+正数可自定义，负数非法。SendApp 与 SendSys 共用额度，校验和序列化也在额度内。
+超限立即返回 ErrBusy，不排队、不自动补发；调用方可用 errors.Is 判断。
+这是发送调用并发限制，不是连接数、Kafka 分区数或进程全局限制。
+发送结束（含错误、超时）释放额度；已经超时但仍由底层 Writer 处理的批次
+不计入活跃调用数，因此这不是 Kafka 内部缓冲字节数的硬上限。
+同一进程建议复用一个 Client。

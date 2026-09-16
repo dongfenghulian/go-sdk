@@ -16,6 +16,8 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+var ErrBusy = errors.New("eventkafka: send concurrency limit reached")
+
 var ErrClosed = errors.New("eventkafka: client closed")
 
 // BrokersKey is the existing etcd key; its spelling is intentional.
@@ -30,6 +32,8 @@ type Config struct {
 	Host         string
 	SendTimeout  time.Duration
 	MaxAttempts  int
+	// MaxConcurrentSends bounds App and Sys sends together per Client. Zero defaults to 16.
+	MaxConcurrentSends int
 }
 
 type messageWriter interface {
@@ -43,6 +47,7 @@ type Client struct {
 	writer messageWriter
 	config Config
 	closed bool
+	slots  chan struct{}
 }
 
 func ParseBrokers(raw string) ([]string, error) {
@@ -77,8 +82,8 @@ func New(cfg Config) (*Client, error) {
 		return nil, err
 	}
 	cfg.Brokers = brokers
-	if cfg.SendTimeout < 0 || cfg.MaxAttempts < 0 {
-		return nil, errors.New("eventkafka: negative timeout or attempts")
+	if cfg.SendTimeout < 0 || cfg.MaxAttempts < 0 || cfg.MaxConcurrentSends < 0 {
+		return nil, errors.New("eventkafka: negative timeout, attempts or concurrency")
 	}
 	if cfg.SendTimeout == 0 {
 		cfg.SendTimeout = 3 * time.Second
@@ -86,10 +91,13 @@ func New(cfg Config) (*Client, error) {
 	if cfg.MaxAttempts == 0 {
 		cfg.MaxAttempts = 3
 	}
+	if cfg.MaxConcurrentSends == 0 {
+		cfg.MaxConcurrentSends = 16
+	}
 	if cfg.Host == "" {
 		cfg.Host, _ = os.Hostname()
 	}
-	return &Client{config: cfg, writer: newWriter(cfg)}, nil
+	return &Client{config: cfg, writer: newWriter(cfg), slots: make(chan struct{}, cfg.MaxConcurrentSends)}, nil
 }
 
 type ownedWriter struct {
@@ -139,6 +147,10 @@ func (c *Client) UpdateBrokers(brokers []string) error {
 }
 
 func (c *Client) SendApp(ctx context.Context, m *AppMessage) error {
+	if err := c.acquire(ctx); err != nil {
+		return err
+	}
+	defer func() { <-c.slots }()
 	if err := m.Validate(); err != nil {
 		return err
 	}
@@ -146,6 +158,10 @@ func (c *Client) SendApp(ctx context.Context, m *AppMessage) error {
 }
 
 func (c *Client) SendSys(ctx context.Context, m *SysMessage) error {
+	if err := c.acquire(ctx); err != nil {
+		return err
+	}
+	defer func() { <-c.slots }()
 	if m == nil {
 		return errors.New("eventkafka: nil SysMessage")
 	}
@@ -198,4 +214,17 @@ func (c *Client) Close() error {
 	}
 	c.closed = true
 	return c.writer.Close()
+}
+
+// acquire never queues work when the per-client concurrency budget is exhausted.
+func (c *Client) acquire(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case c.slots <- struct{}{}:
+		return nil
+	default:
+		return ErrBusy
+	}
 }

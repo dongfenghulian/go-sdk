@@ -300,3 +300,48 @@ func TestOwnedTransportAndUnchangedUpdate(t *testing.T) {
 		t.Fatal("replacement reused old transport")
 	}
 }
+
+func TestSendLimitSharedAcrossAppAndSys(t *testing.T) {
+	c, err := New(Config{Brokers: []string{"broker.example.invalid:9092"}, SourceSystem: "example", MaxConcurrentSends: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.writer.Close()
+	w := &waitingWriter{started: make(chan struct{}), closed: make(chan struct{})}
+	c.writer = w
+	defer c.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- c.SendSys(ctx, NewSysMessage(LevelError, "TEST", "test")) }()
+	<-w.started
+	if err := c.SendApp(context.Background(), NewAppMessage("test")); !errors.Is(err, ErrBusy) {
+		t.Fatalf("got %v", err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if err := c.SendApp(context.Background(), nil); err == nil || errors.Is(err, ErrBusy) {
+		t.Fatalf("slot not released: %v", err)
+	}
+	if len(c.slots) != 0 {
+		t.Fatal("validation error retained slot")
+	}
+}
+
+func TestSendLimitConfiguration(t *testing.T) {
+	cfg := Config{Brokers: []string{"broker.example.invalid:9092"}}
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if cap(c.slots) != 16 {
+		t.Fatal("wrong default")
+	}
+	cfg.MaxConcurrentSends = -1
+	if _, err := New(cfg); err == nil {
+		t.Fatal("accepted negative concurrency")
+	}
+}
