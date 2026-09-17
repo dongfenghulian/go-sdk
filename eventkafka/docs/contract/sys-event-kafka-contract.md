@@ -40,7 +40,7 @@ Kafka 至少一次语义下重投同 id 按版本列 `event_time` 后到覆盖�
   "stack_trace":   "java.net.SocketTimeoutException: ...\n\tat ...",
   "fingerprint":   "a1b2c3d4e5f6a7b8",
 
-  "bid":           "example-business",
+  "bid":           "id01",
   "app_id":        12,
   "request_id":    "req-8f3a...",
   "entity_ref":    "AP20250825001",
@@ -109,7 +109,7 @@ source_system ∥ event_code ∥ event_type ∥ normalize(message) ∥ top_frame
 |---|---|---|
 | 数字（含小数/时长/字节） | `timeout after 30s` | `timeout after <NUM>s` |
 | 十六进制/UUID/ULID | `id=01HXAB...` | `id=<ID>` |
-| IP[:端口] | `192.0.2.1:19000` | `<IP>` |
+| IP[:端口] | `10.1.2.3:19000` | `<IP>` |
 | 引号内字面量 | `user 'ray'` | `user '<STR>'` |
 | 路径/URL 尾段 | `/data/part_998877` | `/data/<PATH>` |
 | 时间戳串 | `2026-09-06 12:00:00` | `<TS>` |

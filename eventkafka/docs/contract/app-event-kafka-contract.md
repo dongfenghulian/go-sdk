@@ -1,13 +1,13 @@
 # App 事件契约（Kafka）
 
-应用事件 → Kafka → 自建 Flink → `app_event_di`（**贴源，无 ODS 中转**）。
+应用事件 → Kafka → 自建 Flink → `event_app_di`（**贴源，无 ODS 中转**）。
 本契约是上游生产者与数仓之间的**唯一对接口径**，三端须逐字段一致：
 
 - 生产者 —— 按本 schema 产消息
 - Flink 作业 —— 消费、时区日切、`payload_json` 序列化、落库
-- `app_event_di`（消费方结果表）—— 字段口径见 `dw.app_event_di`
+- `event_app_di`（消费方结果表）—— 字段口径见 `dw.event_app_di`
 
-**定位**：`app.app_event` 承接**应用事件**，不限于客户端埋点——服务端产生的业务事件
+**定位**：`app.app-event-v1` 承接**应用事件**，不限于客户端埋点——服务端产生的业务事件
 （如放款成功、还款到账、审批完成等）同样以此 schema 投递。
 
 ## Topic
@@ -36,13 +36,13 @@
   "gaid_idfa":      "GAID-xxxx",
   "user_id":        10086,
   "group_user_id":  20086,
-  "id_number":      "example-id-number",
   "mobile":         "token_char28...",
+  "id_number":      "3204...",
 
-  "bid":            "example-business",
+  "bid":            "id01",
   "app_id":         101,
   "app_version":    "3.12.0",
-  "ip":             "192.0.2.1",
+  "ip":             "10.1.2.3",
 
   "fi": { "amount": 500000, "term": 30 },
   "ff": { "apr": 0.36 },
@@ -69,9 +69,9 @@
 | `is_test` | int | | `1`=测试事件；缺省 `0` |
 | `gaid_idfa` | string | | GAID/IDFA；iOS 未授权可空 |
 | `user_id` | int64 | | 用户 ID；未登录/缺省 `0` |
-| `group_user_id` | int64 | | 用户组 ID；未登录/缺省 `0` |
-| `id_number` | string | | 身份证号；可选，原样透传 |
+| `group_user_id` | int64 | | 集团用户 ID；未映射/缺省 `0` |
 | `mobile` | string | | 手机号，原样透传不脱敏 |
+| `id_number` | string | | 证件号，原样透传不脱敏 |
 | `app_version` | string | | App 版本名 |
 | `ip` | string | | 上报 IP，原样透传不脱敏 |
 | `fi` | object | | 整型自定义字段 `{key: int}` |
@@ -106,3 +106,5 @@
 - **不脱敏**（§8.3）：`mobile` / `gaid_idfa` / `ip` 等标识原样透传，访问控制交由库表/列级权限。
 - **`bid` / `app_id` 上游直传**，数仓不再由 package 反查映射；消息不含 `package`。
 - 自定义字段按值类型分投 `fi` / `ff` / `fs` 三桶，不为单 key 开列。
+
+
