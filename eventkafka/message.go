@@ -1,4 +1,4 @@
-// Package eventkafka sends application and system events using the v1 Kafka contracts.
+// Package eventkafka sends application, system and experiment assignment events using the v1 Kafka contracts.
 package eventkafka
 
 import (

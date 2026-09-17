@@ -4,11 +4,12 @@ Go SDK，包名 `eventkafka`，基于 `github.com/segmentio/kafka-go`。
 
 - `AppMessage` → `app.app-event-v1`，Kafka key 为 device_uuid。
 - `SysMessage` → `sys.sys-event-v1`，Kafka key 为 event_id。
+- `ExpAssignmentMessage` → `dw.exp-assignment-v1`，Kafka key 为 `[experiment_id, subject_id]` 的 JSON 数组。
 - 消息字段遵循 [App 契约](docs/contract/app-event-kafka-contract.md) 和 [Sys 契约](docs/contract/sys-event-kafka-contract.md)。
 
 ## 使用
 
-导入路径：`github.com/dongfenghulian/go-sdk/eventkafka`。安装：`go get github.com/dongfenghulian/go-sdk@v0.1.5`。
+导入路径：`github.com/dongfenghulian/go-sdk/eventkafka`。安装：`go get github.com/dongfenghulian/go-sdk@v0.1.6`。
 
 ```go
 import (
@@ -78,10 +79,10 @@ New 不探测 broker 可达性，网络错误在发送时返回。
 - Client 支持并发发送；发送期间不要修改消息及其 map/slice。
 - 默认同步发送、RequireAll、最多 3 次尝试，总发送超时 3 秒；
   可通过 SendTimeout、MaxAttempts 调整，调用方更短的 context deadline 优先。
-- 发送超时从 SendApp/SendSys 入口开始计算；发送不会等待旧 Writer 清理。
+- 发送超时从 SendApp/SendSys/SendExpAssignment 入口开始计算；发送不会等待旧 Writer 清理。
   同步校验、JSON 编码（包括自定义 MarshalJSON）和运行时调度不能被 context 强制中断，
   因此不承诺任意调用方代码下严格的墙钟返回时限。
-- 构造函数只生成一次 UUID 与 UTC 毫秒时间；重投应复用消息及 event_id。
+- 构造函数只生成一次 UUID；App/Sys 自动生成当前时间，实验分流使用调用方传入的分流时间。重投复用消息及 event_id。
 - 失败返回 error，不递归发送 SysMessage，不内置落盘队列。
   进程崩溃或重试耗尽后的补发由调用方负责；超时结果可能不确定，允许重复投递。
 - SysMessage 默认继承客户端的 source_system、job_name、env、host、app_version；
@@ -91,9 +92,9 @@ New 不探测 broker 可达性，网络错误在发送时返回。
   不接受字符串、数字或显式 JSON null。无需字段时使用 nil。
 - 不脱敏、不截断，不生成消费方派生字段；Flink 负责契约规定的体积治理。
   Kafka 自身消息大小限制仍可能导致发送失败。
-- 调用方提供有效 bid、身份字段和 is_test；SDK 不查询业务数据库。
+- App 事件由调用方提供有效 bid、身份字段和 is_test；SDK 不查询业务数据库。
 - 同设备使用相同 Kafka key 不等于跨并发请求的业务严格顺序。
-- SDK 不自动创建 topic，部署前准备两个 topic。
+- SDK 不自动创建 topic，部署前准备所需 topic。
 
 ## 验证
 
@@ -117,9 +118,23 @@ SDK 不内置账号、密码、真实连接地址或本机路径。示例域名�
 ## 发送并发限制（v0.1.4）
 
 Config.MaxConcurrentSends 控制每个 Client 同时执行的发送调用数量，默认 32，
-正数可自定义，负数非法。SendApp 与 SendSys 共用额度，校验和序列化也在额度内。
+正数可自定义，负数非法。所有事件发送接口共用额度，校验和序列化也在额度内。
 超限立即返回 ErrBusy，不排队、不自动补发；调用方可用 errors.Is 判断。
 这是发送调用并发限制，不是连接数、Kafka 分区数或进程全局限制。
 发送结束（含错误、超时）释放额度；已经超时但仍由底层 Writer 处理的批次
 不计入活跃调用数，因此这不是 Kafka 内部缓冲字节数的硬上限。
 同一进程建议复用一个 Client。
+
+## 实验分流事件
+
+自 v0.1.6 起支持。
+
+遵循 [实验分流契约](docs/contract/exp-assignment-event-contract.md)，每个实验分组发送一条：
+
+```go
+msg := eventkafka.NewExpAssignmentMessage("risk_experiment", "AP001", "treatment", assignedTimeMS)
+err := client.SendExpAssignment(ctx, msg)
+```
+
+`assignedTimeMS` 传实际分流的 UTC 毫秒时间。`IsActive=nil` 省略字段，默认有效；显式失效用 `inactive := 0; msg.IsActive = &inactive`。构造函数生成审计 UUID，重试复用消息。
+去重依据 `(experiment_id, subject_id)`；重分流使用更大的时间戳。字段原样保留，拒绝空必填字段、非法时间/状态和控制字符。调用方确保实验已在元数据中登记；SDK 不查询元数据，也不上报 grain、scene、bid 或 app_id。

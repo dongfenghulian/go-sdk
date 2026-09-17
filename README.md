@@ -6,14 +6,14 @@
 
 | 包 | 用途 |
 | --- | --- |
-| [eventkafka](eventkafka/README.md) | 向 Kafka 发送 AppMessage 和 SysMessage，支持契约校验、重试与连接更新 |
+| [eventkafka](eventkafka/README.md) | 向 Kafka 发送 AppMessage、SysMessage 和 ExpAssignmentMessage，支持契约校验、重试与连接更新 |
 
 ## 安装
 
 安装：
 
 ```sh
-go get github.com/dongfenghulian/go-sdk@v0.1.5
+go get github.com/dongfenghulian/go-sdk@v0.1.6
 ```
 
 业务中按需导入：

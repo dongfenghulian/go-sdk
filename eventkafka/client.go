@@ -32,7 +32,7 @@ type Config struct {
 	Host         string
 	SendTimeout  time.Duration
 	MaxAttempts  int
-	// MaxConcurrentSends bounds App and Sys sends together per Client. Zero defaults to 32.
+	// MaxConcurrentSends bounds all event sends together per Client. Zero defaults to 32.
 	MaxConcurrentSends int
 }
 
